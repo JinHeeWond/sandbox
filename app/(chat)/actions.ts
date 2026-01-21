@@ -4,7 +4,10 @@ import { generateText, type UIMessage } from "ai";
 import { cookies } from "next/headers";
 import type { VisibilityType } from "@/components/visibility-selector";
 import { titlePrompt } from "@/lib/ai/prompts";
-import { getTitleModel } from "@/lib/ai/providers";
+// import { getTitleModel } from "@/lib/ai/providers";
+// import { google } from '@ai-sdk/google';
+import { groq } from '@ai-sdk/groq';
+
 import {
   deleteMessagesByChatIdAfterTimestamp,
   getMessageById,
@@ -23,7 +26,9 @@ export async function generateTitleFromUserMessage({
   message: UIMessage;
 }) {
   const { text } = await generateText({
-    model: getTitleModel(),
+    // model: getTitleModel(),
+    // model: google('gemini-2.0-flash'),
+    model: groq('llama-3.3-70b-versatile'),
     system: titlePrompt,
     prompt: getTextFromMessage(message),
   });

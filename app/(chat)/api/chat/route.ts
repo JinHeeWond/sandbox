@@ -1,4 +1,7 @@
 import { geolocation } from "@vercel/functions";
+// import { google } from "@ai-sdk/google";
+import { groq } from '@ai-sdk/groq';
+
 import {
   convertToModelMessages,
   createUIMessageStream,
@@ -140,35 +143,37 @@ export async function POST(request: Request) {
       originalMessages: isToolApprovalFlow ? uiMessages : undefined,
       execute: async ({ writer: dataStream }) => {
         const result = streamText({
-          model: getLanguageModel(selectedChatModel),
+          // model: getLanguageModel(selectedChatModel),
+          // model: google('gemini-2.0-flash'),
+          model: groq('llama-3.3-70b-versatile'),
           system: systemPrompt({ selectedChatModel, requestHints }),
           messages: modelMessages,
-          stopWhen: stepCountIs(5),
-          experimental_activeTools: isReasoningModel
-            ? []
-            : [
-                "getWeather",
-                "createDocument",
-                "updateDocument",
-                "requestSuggestions",
-              ],
-          providerOptions: isReasoningModel
-            ? {
-                anthropic: {
-                  thinking: { type: "enabled", budgetTokens: 10_000 },
-                },
-              }
-            : undefined,
-          tools: {
-            getWeather,
-            createDocument: createDocument({ session, dataStream }),
-            updateDocument: updateDocument({ session, dataStream }),
-            requestSuggestions: requestSuggestions({ session, dataStream }),
-          },
-          experimental_telemetry: {
-            isEnabled: isProductionEnvironment,
-            functionId: "stream-text",
-          },
+          // stopWhen: stepCountIs(5),
+          // experimental_activeTools: isReasoningModel
+          //   ? []
+          //   : [
+          //       "getWeather",
+          //       "createDocument",
+          //       "updateDocument",
+          //       "requestSuggestions",
+          //     ],
+          // providerOptions: isReasoningModel
+          //   ? {
+          //       anthropic: {
+          //         thinking: { type: "enabled", budgetTokens: 10_000 },
+          //       },
+          //     }
+          //   : undefined,
+          // tools: {
+          //   getWeather,
+          //   createDocument: createDocument({ session, dataStream }),
+          //   updateDocument: updateDocument({ session, dataStream }),
+          //   requestSuggestions: requestSuggestions({ session, dataStream }),
+          // },
+          // experimental_telemetry: {
+          //   isEnabled: isProductionEnvironment,
+          //   functionId: "stream-text",
+          // },
         });
 
         dataStream.merge(result.toUIMessageStream({ sendReasoning: true }));

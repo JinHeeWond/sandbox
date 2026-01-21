@@ -22,15 +22,22 @@ export async function generateTitleFromUserMessage({
 }: {
   message: UIMessage;
 }) {
-  const { text } = await generateText({
-    model: getTitleModel(),
-    system: titlePrompt,
-    prompt: getTextFromMessage(message),
-  });
-  return text
-    .replace(/^[#*"\s]+/, "")
-    .replace(/["]+$/, "")
-    .trim();
+  try {
+    const { text } = await generateText({
+      model: getTitleModel(),
+      system: titlePrompt,
+      prompt: getTextFromMessage(message),
+    });
+    return text
+      .replace(/^[#*"\s]+/, "")
+      .replace(/["]+$/, "")
+      .trim();
+  } catch (error) {
+    console.error("Failed to generate title:", error);
+    // 실패 시 사용자 메시지의 첫 50자를 제목으로 사용
+    const fallbackTitle = getTextFromMessage(message).slice(0, 50);
+    return fallbackTitle || "New Chat";
+  }
 }
 
 export async function deleteTrailingMessages({ id }: { id: string }) {

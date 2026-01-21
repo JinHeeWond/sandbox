@@ -198,9 +198,12 @@ def generate_clarifying_question_tool(query: str) -> List[dict]:
     """
     response = json_model.invoke(system_prompt + f'\n\nuserInput: "{query}"')
     result = json.loads(response.content)
-    # LLM이 {"questions": [...]} 형태로 반환할 경우 처리
-    if isinstance(result, dict) and "questions" in result:
-        return result["questions"]
+    # LLM이 {"questions": [...]} 또는 {"clarifyingQuestions": [...]} 형태로 반환할 경우 처리
+    if isinstance(result, dict):
+        if "questions" in result:
+            return result["questions"]
+        if "clarifyingQuestions" in result:
+            return result["clarifyingQuestions"]
     return result
 
 def create_plan_tool(query: str) -> List[Dict[str, Any]]:
@@ -539,9 +542,12 @@ async def chat(request: ChatRequest):
                 if last_message.name == "generate_clarifying_question_tool":
                     try:
                         questions = json.loads(last_message.content)
-                        # LLM이 {"questions": [...]} 형태로 반환할 경우 처리
-                        if isinstance(questions, dict) and "questions" in questions:
-                            questions = questions["questions"]
+                        # LLM이 {"questions": [...]} 또는 {"clarifyingQuestions": [...]} 형태로 반환할 경우 처리
+                        if isinstance(questions, dict):
+                            if "questions" in questions:
+                                questions = questions["questions"]
+                            elif "clarifyingQuestions" in questions:
+                                questions = questions["clarifyingQuestions"]
                         response_type = "clarifying_questions"
                         # 질문들을 텍스트로 포맷팅하여 response에 포함
                         formatted_questions = "더 정확한 답변을 드리기 위해 몇 가지 여쭤볼게요:\n\n"

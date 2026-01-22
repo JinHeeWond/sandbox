@@ -73,6 +73,8 @@ export function Chat({
 
   // Ref to store clarifying questions from onData to use in onFinish
   const clarifyingQuestionsRef = useRef<any[] | null>(null);
+  // Ref to store generated image from onData to use in onFinish
+  const generatedImageRef = useRef<string | null>(null);
 
   useEffect(() => {
     currentModelIdRef.current = currentModelId;
@@ -106,6 +108,7 @@ export function Chat({
     transport: new DefaultChatTransport({
       api: "/api/chat",
       fetch: fetchWithErrorHandlers,
+      streamProtocol: "ui",
       prepareSendMessagesRequest(request) {
         const lastMessage = request.messages.at(-1);
         const isToolApprovalContinuation =
@@ -201,11 +204,77 @@ export function Chat({
           return currentMessages;
         });
       }
+
+      // Handle generated-image data - just store in ref, add in onFinish for reliability
+      let generatedImageUrl: string | null = null;
+
+      // Case 1: Direct generated-image data
+      if (data.type === "generated-image" && data.imageUrl) {
+        console.log("[onData] Case 1: Direct generated-image");
+        generatedImageUrl = data.imageUrl;
+      }
+      // Case 2: Wrapped in data array
+      else if (data.type === "data" && Array.isArray(data.data)) {
+        const imageData = data.data.find(
+          (item: any) => item.type === "generated-image"
+        );
+        if (imageData?.imageUrl) {
+          console.log("[onData] Case 2: generated-image in data array");
+          generatedImageUrl = imageData.imageUrl;
+        }
+      }
+      // Case 3: Array containing generated-image object
+      else if (Array.isArray(data)) {
+        const imageData = data.find(
+          (item: any) => item.type === "generated-image"
+        );
+        if (imageData?.imageUrl) {
+          console.log("[onData] Case 3: generated-image in array");
+          generatedImageUrl = imageData.imageUrl;
+        }
+      }
+
+      // URL만 오면 바로 메시지에 추가 (base64가 아닌 URL이므로 빠르게 처리 가능)
+      if (generatedImageUrl) {
+        console.log("[onData] Found generated image, adding to message immediately");
+        generatedImageRef.current = generatedImageUrl;
+
+        // 즉시 메시지에 추가 (clarifying-questions와 동일한 방식)
+        setMessages((currentMessages) => {
+          const lastMessage = currentMessages.at(-1);
+          if (lastMessage?.role === "assistant") {
+            const hasImage = lastMessage.parts?.some(
+              (p) => (p as any).type === "generated-image"
+            );
+            if (!hasImage) {
+              console.log("[onData] Adding generated-image part to message immediately");
+              return currentMessages.map((msg, idx) =>
+                idx === currentMessages.length - 1
+                  ? {
+                      ...msg,
+                      parts: [
+                        ...(msg.parts || []),
+                        {
+                          type: "generated-image",
+                          imageUrl: generatedImageUrl,
+                        } as any,
+                      ],
+                    }
+                  : msg
+              );
+            }
+          }
+          return currentMessages;
+        });
+      }
     },
     onFinish: async () => {
-      console.log("[onFinish] Stream finished, clarifyingQuestionsRef:", clarifyingQuestionsRef.current);
+      console.log("[onFinish] Stream finished, clarifyingQuestionsRef:", clarifyingQuestionsRef.current, "generatedImageRef:", generatedImageRef.current);
 
-      // Clarifying questions가 onData에서 처리되지 않았으면 여기서 처리
+      // Small delay to ensure useChat has finalized its internal state
+      await new Promise(resolve => setTimeout(resolve, 100));
+
+      // Clarifying questions 처리
       if (clarifyingQuestionsRef.current) {
         const questions = clarifyingQuestionsRef.current;
         clarifyingQuestionsRef.current = null;
@@ -240,35 +309,91 @@ export function Chat({
           }
           return currentMessages;
         });
+      }
+
+      // Generated image 처리 - 스트리밍 완료 후 안전하게 추가
+      if (generatedImageRef.current) {
+        const imageUrl = generatedImageRef.current;
+        generatedImageRef.current = null;
+
+        console.log("[onFinish] Processing generated image in onFinish, imageUrl length:", imageUrl.length);
+        setMessages((currentMessages) => {
+          const lastMessage = currentMessages.at(-1);
+          console.log("[onFinish] Last message for image:", lastMessage?.role, "parts:", lastMessage?.parts?.length);
+          if (lastMessage?.role === "assistant") {
+            const hasImage = lastMessage.parts?.some(
+              (p) => (p as any).type === "generated-image"
+            );
+            if (!hasImage) {
+              console.log("[onFinish] Adding generated-image to message");
+              return currentMessages.map((msg, idx) =>
+                idx === currentMessages.length - 1
+                  ? {
+                      ...msg,
+                      parts: [
+                        ...(msg.parts || []),
+                        {
+                          type: "generated-image",
+                          imageUrl: imageUrl,
+                        } as any,
+                      ],
+                    }
+                  : msg
+              );
+            } else {
+              console.log("[onFinish] Message already has generated-image");
+            }
+          }
+          return currentMessages;
+        });
       } else {
-        // onData에서 clarifying questions를 못 받았으면 DB에서 최신 메시지를 가져와서 확인
-        console.log("[onFinish] No clarifying questions in ref, fetching from DB...");
+        // ref에 이미지가 없으면 DB에서 확인
+        console.log("[onFinish] No image in ref, checking DB...");
         try {
           const response = await fetch(`/api/chat/${id}/messages`);
           if (response.ok) {
             const dbMessages = await response.json();
             const lastDbMessage = dbMessages.at(-1);
             if (lastDbMessage?.role === "assistant") {
+              const imagePart = lastDbMessage.parts?.find(
+                (p: any) => p.type === "generated-image"
+              );
               const clarifyingPart = lastDbMessage.parts?.find(
                 (p: any) => p.type === "clarifying-questions"
               );
-              if (clarifyingPart?.questions) {
-                console.log("[onFinish] Found clarifying questions in DB, updating messages");
+
+              if (imagePart?.imageUrl || clarifyingPart?.questions) {
+                console.log("[onFinish] Found special parts in DB");
                 setMessages((currentMessages) => {
                   const lastMessage = currentMessages.at(-1);
                   if (lastMessage?.role === "assistant") {
-                    const hasQuestions = lastMessage.parts?.some(
-                      (p) => (p as any).type === "clarifying-questions"
-                    );
-                    if (!hasQuestions) {
+                    const partsToAdd: any[] = [];
+
+                    if (imagePart?.imageUrl) {
+                      const hasImage = lastMessage.parts?.some(
+                        (p) => (p as any).type === "generated-image"
+                      );
+                      if (!hasImage) {
+                        console.log("[onFinish] Adding image from DB");
+                        partsToAdd.push(imagePart);
+                      }
+                    }
+
+                    if (clarifyingPart?.questions) {
+                      const hasQuestions = lastMessage.parts?.some(
+                        (p) => (p as any).type === "clarifying-questions"
+                      );
+                      if (!hasQuestions) {
+                        partsToAdd.push(clarifyingPart);
+                      }
+                    }
+
+                    if (partsToAdd.length > 0) {
                       return currentMessages.map((msg, idx) =>
                         idx === currentMessages.length - 1
                           ? {
                               ...msg,
-                              parts: [
-                                ...(msg.parts || []),
-                                clarifyingPart as any,
-                              ],
+                              parts: [...(msg.parts || []), ...partsToAdd],
                             }
                           : msg
                       );
@@ -337,6 +462,7 @@ export function Chat({
     initialMessages,
     resumeStream,
     setMessages,
+    status,
   });
 
   return (

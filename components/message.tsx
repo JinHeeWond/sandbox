@@ -23,6 +23,7 @@ import { MessageEditor } from "./message-editor";
 import { MessageReasoning } from "./message-reasoning";
 import { PreviewAttachment } from "./preview-attachment";
 import { Weather } from "./weather";
+import { ImagePreview } from "./image-preview";
 
 const PurePreviewMessage = ({
   addToolApprovalResponse,
@@ -345,7 +346,7 @@ const PurePreviewMessage = ({
               );
             }
 
-            if (type === "clarifying-questions") {
+            if ((type as string) === "clarifying-questions") {
               const questions = (part as { questions?: ClarifyingQuestion[] }).questions;
               if (questions && questions.length > 0) {
                 return (
@@ -356,6 +357,21 @@ const PurePreviewMessage = ({
                     sendMessage={sendMessage}
                     isDisabled={isLoading || isReadonly}
                   />
+                );
+              }
+            }
+
+            // 생성된 이미지 렌더링 (미리보기 기능 포함)
+            if ((type as string) === "generated-image") {
+              const imageUrl = (part as { imageUrl?: string }).imageUrl;
+              if (imageUrl) {
+                return (
+                  <div key={key} className="mt-2">
+                    <ImagePreview
+                      src={imageUrl}
+                      alt="Generated image"
+                    />
+                  </div>
                 );
               }
             }

@@ -2,8 +2,9 @@
 import type { UseChatHelpers } from "@ai-sdk/react";
 import { useState } from "react";
 import type { Vote } from "@/lib/db/schema";
-import type { ChatMessage } from "@/lib/types";
+import type { ChatMessage, ClarifyingQuestion } from "@/lib/types";
 import { cn, sanitizeText } from "@/lib/utils";
+import { ClarifyingQuestions } from "./clarifying-questions";
 import { useDataStream } from "./data-stream-provider";
 import { DocumentToolResult } from "./document";
 import { DocumentPreview } from "./document-preview";
@@ -29,6 +30,7 @@ const PurePreviewMessage = ({
   message,
   vote,
   isLoading,
+  sendMessage,
   setMessages,
   regenerate,
   isReadonly,
@@ -39,6 +41,7 @@ const PurePreviewMessage = ({
   message: ChatMessage;
   vote: Vote | undefined;
   isLoading: boolean;
+  sendMessage: UseChatHelpers<ChatMessage>["sendMessage"];
   setMessages: UseChatHelpers<ChatMessage>["setMessages"];
   regenerate: UseChatHelpers<ChatMessage>["regenerate"];
   isReadonly: boolean;
@@ -340,6 +343,21 @@ const PurePreviewMessage = ({
                   </ToolContent>
                 </Tool>
               );
+            }
+
+            if (type === "clarifying-questions") {
+              const questions = (part as { questions?: ClarifyingQuestion[] }).questions;
+              if (questions && questions.length > 0) {
+                return (
+                  <ClarifyingQuestions
+                    key={key}
+                    questions={questions}
+                    chatId={chatId}
+                    sendMessage={sendMessage}
+                    isDisabled={isLoading || isReadonly}
+                  />
+                );
+              }
             }
 
             return null;

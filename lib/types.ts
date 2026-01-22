@@ -55,3 +55,20 @@ export type Attachment = {
   url: string;
   contentType: string;
 };
+
+// Clarifying Questions types
+export interface ClarifyingQuestionChoice {
+  id: string;
+  text: string;
+}
+
+export interface ClarifyingQuestion {
+  id: string;
+  question: string;
+  choices: ClarifyingQuestionChoice[];
+  allowMultiple?: boolean;
+}
+
+export interface ClarifyingQuestionsData {
+  questions: ClarifyingQuestion[];
+}

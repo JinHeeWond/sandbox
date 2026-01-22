@@ -135,24 +135,117 @@ def _get_last_user_message(state: AgentState) -> str:
 # ==========================================================
 def is_ambiguous_with_llm(query: str) -> bool:
     system_prompt = """
-    You are an expert at judging the ambiguity of user requests.
+    You are a STRICT judge of request ambiguity. Your job is to ensure we have ALL necessary information before proceeding.
+    You must ask clarifying questions until the user's request is COMPLETELY CLEAR and ACTIONABLE.
 
-    Return is_ambiguous: true if ANY of the following apply:
-    - Travel requests: duration, budget, companions, or interests/purpose not specified
-    - Recommendations: use case, budget, or preferences not specified
-    - Technical questions: environment, purpose, or constraints unclear
-    - General requests: no specific conditions or constraints given
-    - Simple keywords only: e.g., "Japan travel", "restaurant recommendations"
+    ## DOMAIN-SPECIFIC REQUIRED CONDITIONS:
 
-    A request is only clear if at least 3 specific conditions are provided.
-    If ambiguous return true, if clear return false.
+    ### Travel Requests (ALL of these must be explicitly stated):
+    - Destination (specific city/region, not just country)
+    - Duration (exact dates or number of days)
+    - Budget range (specific amount or range)
+    - Travel companions (solo, couple, family, friends + number of people)
+    - Main purpose/interests (sightseeing, food, shopping, relaxation, adventure, etc.)
+    - Accommodation preference (hotel, airbnb, hostel, luxury level)
 
-    Respond ONLY in JSON: {"is_ambiguous": boolean, "reason": "..."}
+    ### Product/Service Recommendations (ALL of these must be explicitly stated):
+    - Specific use case/purpose
+    - Budget range
+    - Key preferences or requirements (at least 2-3 specific criteria)
+    - Any constraints (size, brand preference, must-have features)
+
+    ### Technical Questions (ALL of these must be explicitly stated):
+    - Development environment (OS, language version, framework)
+    - Specific goal/what they're trying to achieve
+    - Current situation/what they've tried
+    - Constraints or requirements
+
+    ### Recipe/Cooking Requests (ALL of these must be explicitly stated):
+    - Dish type or cuisine preference
+    - Number of servings
+    - Dietary restrictions or allergies
+    - Available ingredients or ingredients to avoid
+    - Skill level (beginner, intermediate, advanced)
+    - Time constraints for cooking
+
+    ### Learning/Study Requests (ALL of these must be explicitly stated):
+    - Subject or topic to learn
+    - Current knowledge level (beginner, intermediate, advanced)
+    - Learning goal (exam prep, career, hobby, etc.)
+    - Preferred learning style (video, reading, hands-on)
+    - Time available for study
+    - Any specific resources or constraints
+
+    ### Career/Job Advice (ALL of these must be explicitly stated):
+    - Current situation (student, employed, job-seeking, career change)
+    - Target field or position
+    - Experience level and relevant skills
+    - Location or remote preference
+    - Salary expectations or constraints
+    - Timeline for achieving goal
+
+    ### Health/Fitness Requests (ALL of these must be explicitly stated):
+    - Specific goal (weight loss, muscle gain, flexibility, general health)
+    - Current fitness level
+    - Any health conditions or limitations
+    - Available equipment or gym access
+    - Time available for exercise
+    - Dietary preferences or restrictions
+
+    ### Event Planning (ALL of these must be explicitly stated):
+    - Type of event (birthday, wedding, meeting, party)
+    - Number of attendees
+    - Budget range
+    - Date and location preferences
+    - Theme or style preferences
+    - Special requirements or constraints
+
+    ### Shopping/Purchase Decisions (ALL of these must be explicitly stated):
+    - Specific product category
+    - Budget range
+    - Primary use case
+    - Must-have features (at least 2-3)
+    - Brand preferences or exclusions
+    - Purchase timeline
+
+    ### Creative Projects (ALL of these must be explicitly stated):
+    - Type of project (writing, art, music, video, etc.)
+    - Purpose or audience
+    - Style or tone preferences
+    - Length or scope
+    - Deadline or timeline
+    - Any specific requirements or constraints
+
+    ### General Requests:
+    - Must have at least 3-4 specific, concrete conditions
+    - Vague qualifiers like "good", "nice", "affordable", "best" without specific criteria count as MISSING information
+    - Questions like "추천해줘", "알려줘", "도와줘" without context are ALWAYS ambiguous
+
+    ## JUDGMENT RULES:
+    1. If even ONE required condition for the domain is missing or vague → is_ambiguous: true
+    2. If user gave partial answers but other conditions are still missing → is_ambiguous: true
+    3. Only return is_ambiguous: false when ALL domain-specific conditions are EXPLICITLY and CLEARLY stated
+    4. When in doubt, return is_ambiguous: true
+    5. "I don't care" or "anything is fine" for a condition counts as answered
+    6. Simple factual questions that don't require personalization are NOT ambiguous (e.g., "What is the capital of France?")
+    7. Questions that are clearly open-ended exploration without needing specific context are NOT ambiguous (e.g., "Tell me about quantum physics")
+
+    ## ANALYSIS FORMAT:
+    List each required condition and whether it was provided:
+    - Condition 1: [provided/missing/vague]
+    - Condition 2: [provided/missing/vague]
+    ...
+
+    Respond ONLY in JSON: {"is_ambiguous": boolean, "missing_conditions": ["list of missing items"], "reason": "brief explanation"}
     """
     try:
         response = json_model.invoke(system_prompt + f"\n\nConversation History:\n\"{query}\"")
         result = json.loads(response.content)
-        return result.get("is_ambiguous", True)
+        is_ambiguous = result.get("is_ambiguous", True)
+        missing = result.get("missing_conditions", [])
+        reason = result.get("reason", "")
+        print(f"Ambiguity check: is_ambiguous={is_ambiguous}, missing={missing}, reason={reason}")
+        return is_ambiguous
     except Exception as e:
         print(f"Error in is_ambiguous_with_llm: {e}")
         return True
@@ -178,6 +271,7 @@ def _generate_search_query_with_llm(plan_description: str, conversation_history:
     system_prompt = """
     Convert the plan description into a concise search query.
     Return ONLY the search query as plain string.
+    검색 쿼리는 한국어로 작성하세요.
     """
     try:
         response = model.invoke(system_prompt + f"\n\nPlan: \"{plan_description}\"\nHistory: \"{conversation_history}\"")
@@ -192,11 +286,130 @@ def _generate_search_query_with_llm(plan_description: str, conversation_history:
 # ==========================================================
 def generate_clarifying_question_tool(query: str) -> List[dict]:
     system_prompt = """
-    Generate clarifying questions in JSON array format.
-    Each item: {"question": "...", "choices": ["...", "...", "..."]}
-    ALWAYS respond in Korean.
+    ## 최우선 규칙 - 언어 제한 (CRITICAL - LANGUAGE RESTRICTION):
+    - 모든 출력은 반드시 100% 한국어로만 작성하세요.
+    - 중국어(汉语/中文), 일본어(日本語), 영어 단어를 절대 사용하지 마세요.
+    - "优先队列" 대신 "우선순위 큐"처럼 한국어로 번역해서 사용하세요.
+    - 외래어는 한글로 표기하세요 (예: Priority Queue → 프라이어리티 큐 또는 우선순위 큐)
+
+    You are generating clarifying questions to gather MISSING information from the user.
+    Your goal is to ask questions until the request is COMPLETELY CLEAR and ACTIONABLE.
+
+    ## IMPORTANT RULES:
+    1. Analyze the conversation history carefully to identify what information is ALREADY PROVIDED
+    2. ONLY ask about information that is MISSING or UNCLEAR
+    3. DO NOT ask about information the user has already provided
+    4. Generate 1-3 questions maximum, focusing on the MOST IMPORTANT missing information
+    5. If most information is provided, ask only about the remaining gaps
+    6. Prioritize questions that will have the biggest impact on the quality of the response
+    7. ALL OUTPUT MUST BE IN KOREAN ONLY - NO Chinese, Japanese, or English words
+
+    ## DOMAIN-SPECIFIC REQUIRED INFORMATION:
+
+    ### Travel:
+    - Destination (specific city/region)
+    - Duration (dates or number of days)
+    - Budget range
+    - Travel companions (solo/couple/family/friends + count)
+    - Main interests (sightseeing, food, shopping, etc.)
+    - Accommodation preference
+
+    ### Product/Service Recommendations:
+    - Use case/purpose
+    - Budget
+    - Key preferences (2-3 criteria)
+    - Constraints (size, brand, must-have features)
+
+    ### Technical:
+    - Environment details (OS, language, framework)
+    - Goal/what they're trying to achieve
+    - Current situation/what they've tried
+    - Constraints
+
+    ### Recipe/Cooking:
+    - Dish type or cuisine
+    - Number of servings
+    - Dietary restrictions/allergies
+    - Available ingredients
+    - Skill level
+    - Time constraints
+
+    ### Learning/Study:
+    - Subject or topic
+    - Current knowledge level
+    - Learning goal
+    - Preferred learning style
+    - Time available
+    - Resources or constraints
+
+    ### Career/Job:
+    - Current situation
+    - Target field/position
+    - Experience level
+    - Location preference
+    - Salary expectations
+    - Timeline
+
+    ### Health/Fitness:
+    - Specific goal
+    - Current fitness level
+    - Health conditions/limitations
+    - Equipment access
+    - Time available
+    - Dietary preferences
+
+    ### Event Planning:
+    - Event type
+    - Number of attendees
+    - Budget
+    - Date/location
+    - Theme/style
+    - Special requirements
+
+    ### Shopping/Purchase:
+    - Product category
+    - Budget
+    - Primary use case
+    - Must-have features
+    - Brand preferences
+    - Timeline
+
+    ### Creative Projects:
+    - Project type
+    - Purpose/audience
+    - Style/tone
+    - Length/scope
+    - Deadline
+    - Specific requirements
+
+    ### General:
+    - Purpose/goal
+    - Context/background
+    - Constraints or preferences
+    - Expected outcome
+
+    ## OUTPUT FORMAT:
+    Generate questions in JSON array format:
+    [
+        {
+            "question": "질문 내용 (한국어만)",
+            "choices": ["한국어 선택지1", "한국어 선택지2", "한국어 선택지3", "한국어 선택지4"],
+            "allowMultiple": true/false
+        }
+    ]
+
+    - allowMultiple: true for preferences/interests (can select multiple), false for single-choice (budget, duration)
+    - Provide 3-5 realistic choices for each question
+    - Include "기타" or "직접 입력" as last choice when appropriate
+    - Make choices specific and actionable, not vague
+
+    ## 언어 규칙 재확인 (LANGUAGE RULES - FINAL CHECK):
+    - question과 choices의 모든 텍스트는 반드시 한국어로만 작성
+    - 기술 용어도 한글로 표기: Priority Queue → 우선순위 큐, Binary Search → 이진 탐색
+    - 한자(漢字)나 일본어 히라가나/가타카나 절대 금지
+    - 영어 약어도 한글로: API → 에이피아이, CPU → 씨피유 (또는 중앙처리장치)
     """
-    response = json_model.invoke(system_prompt + f'\n\nuserInput: "{query}"')
+    response = json_model.invoke(system_prompt + f'\n\nConversation History:\n"{query}"')
     result = json.loads(response.content)
     # LLM이 {"questions": [...]} 또는 {"clarifyingQuestions": [...]} 형태로 반환할 경우 처리
     if isinstance(result, dict):
@@ -211,6 +424,7 @@ def create_plan_tool(query: str) -> List[Dict[str, Any]]:
     Create a research plan as JSON array.
     Each step: {"id": 1, "title": "...", "description": "...", "status": "pending", "research": true, "dependencies": [], "complexity": 3}
     Return ONLY JSON array.
+    중요: title과 description은 반드시 한국어로 작성하세요.
     """
     response = json_model.invoke(system_prompt + f"\n\nUser Request: \"{query}\"")
     try:
@@ -228,6 +442,7 @@ def web_search_tool(query: str) -> List[Dict[str, Any]]:
 def reflect_and_critique_tool(conversation: str) -> str:
     system_prompt = """
     Review the conversation and critique the draft. Suggest improvements.
+    반드시 한국어로만 답변하세요. 중국어, 일본어, 영어를 섞지 마세요.
     """
     response = model.invoke(system_prompt + f"\n\nConversation:\n\"{conversation}\"")
     return response.content
@@ -236,8 +451,9 @@ def reflect_and_critique_tool(conversation: str) -> str:
 # 노드들
 # ==========================================================
 def qa_node(state: AgentState):
-    last_user = _get_last_user_message(state)
-    questions = generate_clarifying_question_tool(last_user)
+    # 전체 대화 히스토리를 전달하여 이미 제공된 정보를 파악할 수 있게 함
+    conversation_history = _get_conversation_history_windowed(state)
+    questions = generate_clarifying_question_tool(conversation_history)
     return {
         "messages": [
             ToolMessage(
@@ -351,8 +567,12 @@ def generator_node(state: AgentState):
             response_type = "search_summary"
             print("Generator: No search results found")
         else:
-            prompt = f"""당신은 유용한 정보를 제공하는 어시스턴트입니다.
-사용자의 요청과 검색 결과를 바탕으로 한국어로 친절하고 상세한 답변을 제공하세요.
+            prompt = f"""당신은 유용한 정보를 제공하는 한국어 어시스턴트입니다.
+
+중요: 반드시 한국어로만 답변하세요. 절대로 중국어(汉语), 일본어(日本語), 영어를 섞어서 사용하지 마세요.
+모든 답변은 100% 한국어로 작성해야 합니다.
+
+사용자의 요청과 검색 결과를 바탕으로 친절하고 상세한 답변을 제공하세요.
 
 [사용자 요청]
 {conversation_history}
@@ -360,7 +580,7 @@ def generator_node(state: AgentState):
 [검색 결과]
 {results_str}
 
-상세하고 유용한 답변을 한국어로 작성하세요:"""
+위 정보를 바탕으로 상세하고 유용한 답변을 한국어로만 작성하세요:"""
             
             try:
                 response = model.invoke(prompt)
@@ -374,14 +594,12 @@ def generator_node(state: AgentState):
                 
                 if "RESOURCE_EXHAUSTED" in error_msg or "429" in error_msg or "quota" in error_msg.lower():
                     # 할당량 초과 시, 검색 결과만으로 답변 작성
-                    response_content = f"""일본 여행 계획에 대한 검색 결과입니다:
-
-"""
+                    response_content = "검색 결과를 정리해드립니다:\n"
                     for i, result in enumerate(research_results, 1):
                         response_content += f"\n{i}. {result.get('title', 'N/A')}\n"
                         response_content += f"   {result.get('content', 'N/A')[:200]}...\n"
                         response_content += f"   출처: {result.get('url', 'N/A')}\n"
-                    
+
                     response_type = "search_summary"
                 else:
                     response_content = "죄송합니다. 답변 생성 중 일시적인 오류가 발생했습니다. 다시 시도해주세요."

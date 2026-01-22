@@ -14,6 +14,7 @@ type MessagesProps = {
   votes: Vote[] | undefined;
   messages: ChatMessage[];
   setMessages: UseChatHelpers<ChatMessage>["setMessages"];
+  sendMessage: UseChatHelpers<ChatMessage>["sendMessage"];
   regenerate: UseChatHelpers<ChatMessage>["regenerate"];
   isReadonly: boolean;
   isArtifactVisible: boolean;
@@ -27,6 +28,7 @@ function PureMessages({
   votes,
   messages,
   setMessages,
+  sendMessage,
   regenerate,
   isReadonly,
   selectedModelId: _selectedModelId,
@@ -66,6 +68,7 @@ function PureMessages({
               requiresScrollPadding={
                 hasSentMessage && index === messages.length - 1
               }
+              sendMessage={sendMessage}
               setMessages={setMessages}
               vote={
                 votes

@@ -71,6 +71,9 @@ export function Chat({
   const [currentModelId, setCurrentModelId] = useState(initialChatModel);
   const currentModelIdRef = useRef(currentModelId);
 
+  // Ref to store clarifying questions from onData to use in onFinish
+  const clarifyingQuestionsRef = useRef<any[] | null>(null);
+
   useEffect(() => {
     currentModelIdRef.current = currentModelId;
   }, [currentModelId]);
@@ -131,8 +134,156 @@ export function Chat({
     }),
     onData: (dataPart) => {
       setDataStream((ds) => (ds ? [...ds, dataPart] : []));
+
+      // Handle clarifying questions data - add to message immediately
+      const data = dataPart as any;
+      let questions: any[] | null = null;
+
+      // Debug: log all data parts to see the format
+      console.log("[onData] Received data part:", JSON.stringify(data, null, 2));
+
+      // Case 1: Direct clarifying-questions data (each item from data array comes individually)
+      if (data.type === "clarifying-questions" && data.questions) {
+        console.log("[onData] Case 1: Direct clarifying-questions");
+        questions = data.questions;
+      }
+      // Case 2: Wrapped in data array (fallback)
+      else if (data.type === "data" && Array.isArray(data.data)) {
+        console.log("[onData] Case 2: Wrapped in data array");
+        const clarifyingQuestionsData = data.data.find(
+          (item: any) => item.type === "clarifying-questions"
+        );
+        if (clarifyingQuestionsData?.questions) {
+          questions = clarifyingQuestionsData.questions;
+        }
+      }
+      // Case 3: Array containing clarifying-questions object
+      else if (Array.isArray(data)) {
+        console.log("[onData] Case 3: Array data");
+        const clarifyingQuestionsData = data.find(
+          (item: any) => item.type === "clarifying-questions"
+        );
+        if (clarifyingQuestionsData?.questions) {
+          questions = clarifyingQuestionsData.questions;
+        }
+      }
+
+      // Immediately add clarifying questions to the last assistant message
+      if (questions) {
+        console.log("[onData] Found questions, adding to message:", questions);
+        clarifyingQuestionsRef.current = questions;
+        setMessages((currentMessages) => {
+          const lastMessage = currentMessages.at(-1);
+          console.log("[onData] Last message role:", lastMessage?.role);
+          if (lastMessage?.role === "assistant") {
+            // Check if clarifying-questions part already exists
+            const hasQuestions = lastMessage.parts?.some(
+              (p) => (p as any).type === "clarifying-questions"
+            );
+            if (!hasQuestions) {
+              console.log("[onData] Adding clarifying-questions part to message");
+              return currentMessages.map((msg, idx) =>
+                idx === currentMessages.length - 1
+                  ? {
+                      ...msg,
+                      parts: [
+                        ...(msg.parts || []),
+                        {
+                          type: "clarifying-questions",
+                          questions: questions,
+                        } as any,
+                      ],
+                    }
+                  : msg
+              );
+            }
+          }
+          return currentMessages;
+        });
+      }
     },
-    onFinish: () => {
+    onFinish: async () => {
+      console.log("[onFinish] Stream finished, clarifyingQuestionsRef:", clarifyingQuestionsRef.current);
+
+      // Clarifying questions가 onData에서 처리되지 않았으면 여기서 처리
+      if (clarifyingQuestionsRef.current) {
+        const questions = clarifyingQuestionsRef.current;
+        clarifyingQuestionsRef.current = null;
+
+        console.log("[onFinish] Processing clarifying questions in onFinish");
+        setMessages((currentMessages) => {
+          const lastMessage = currentMessages.at(-1);
+          console.log("[onFinish] Last message:", lastMessage?.role, lastMessage?.parts?.length);
+          if (lastMessage?.role === "assistant") {
+            const hasQuestions = lastMessage.parts?.some(
+              (p) => (p as any).type === "clarifying-questions"
+            );
+            if (!hasQuestions) {
+              console.log("[onFinish] Adding clarifying-questions to message");
+              return currentMessages.map((msg, idx) =>
+                idx === currentMessages.length - 1
+                  ? {
+                      ...msg,
+                      parts: [
+                        ...(msg.parts || []),
+                        {
+                          type: "clarifying-questions",
+                          questions: questions,
+                        } as any,
+                      ],
+                    }
+                  : msg
+              );
+            } else {
+              console.log("[onFinish] Message already has clarifying-questions");
+            }
+          }
+          return currentMessages;
+        });
+      } else {
+        // onData에서 clarifying questions를 못 받았으면 DB에서 최신 메시지를 가져와서 확인
+        console.log("[onFinish] No clarifying questions in ref, fetching from DB...");
+        try {
+          const response = await fetch(`/api/chat/${id}/messages`);
+          if (response.ok) {
+            const dbMessages = await response.json();
+            const lastDbMessage = dbMessages.at(-1);
+            if (lastDbMessage?.role === "assistant") {
+              const clarifyingPart = lastDbMessage.parts?.find(
+                (p: any) => p.type === "clarifying-questions"
+              );
+              if (clarifyingPart?.questions) {
+                console.log("[onFinish] Found clarifying questions in DB, updating messages");
+                setMessages((currentMessages) => {
+                  const lastMessage = currentMessages.at(-1);
+                  if (lastMessage?.role === "assistant") {
+                    const hasQuestions = lastMessage.parts?.some(
+                      (p) => (p as any).type === "clarifying-questions"
+                    );
+                    if (!hasQuestions) {
+                      return currentMessages.map((msg, idx) =>
+                        idx === currentMessages.length - 1
+                          ? {
+                              ...msg,
+                              parts: [
+                                ...(msg.parts || []),
+                                clarifyingPart as any,
+                              ],
+                            }
+                          : msg
+                      );
+                    }
+                  }
+                  return currentMessages;
+                });
+              }
+            }
+          }
+        } catch (error) {
+          console.error("[onFinish] Error fetching messages from DB:", error);
+        }
+      }
+
       // 사이드바 히스토리 업데이트를 위해 revalidation 강제
       mutate(
         (key) => typeof key === 'string' && key.startsWith('/api/history'),
@@ -205,6 +356,7 @@ export function Chat({
           messages={messages}
           regenerate={regenerate}
           selectedModelId={initialChatModel}
+          sendMessage={sendMessage}
           setMessages={setMessages}
           status={status}
           votes={votes}

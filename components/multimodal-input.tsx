@@ -32,7 +32,7 @@ import {
   DEFAULT_CHAT_MODEL,
   modelsByProvider,
 } from "@/lib/ai/models";
-import type { Attachment, ChatMessage } from "@/lib/types";
+import type { Attachment, ChatMessage, PromptTemplate } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import {
   PromptInput,
@@ -43,6 +43,7 @@ import {
 } from "./elements/prompt-input";
 import { ArrowUpIcon, PaperclipIcon, StopIcon } from "./icons";
 import { PreviewAttachment } from "./preview-attachment";
+import { PromptTemplatePanel } from "./prompt-template-panel";
 import { SuggestedActions } from "./suggested-actions";
 import { Button } from "./ui/button";
 import type { VisibilityType } from "./visibility-selector";
@@ -144,6 +145,15 @@ function PureMultimodalInput({
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [uploadQueue, setUploadQueue] = useState<string[]>([]);
   const [isTemplateActive, setIsTemplateActive] = useState(false);
+
+  const handleSelectTemplate = useCallback(
+    (template: PromptTemplate) => {
+      setInput(template.content);
+      setIsTemplateActive(false);
+      textareaRef.current?.focus();
+    },
+    [setInput]
+  );
 
   const submitForm = useCallback(() => {
     window.history.pushState({}, "", `/chat/${chatId}`);
@@ -297,6 +307,12 @@ function PureMultimodalInput({
   }, [handlePaste]);
 
   return (
+    <>
+    <PromptTemplatePanel
+      open={isTemplateActive}
+      onOpenChange={setIsTemplateActive}
+      onSelectTemplate={handleSelectTemplate}
+    />
     <div className={cn("relative flex w-full flex-col gap-4", className)}>
       {messages.length === 0 &&
         attachments.length === 0 &&
@@ -410,6 +426,7 @@ function PureMultimodalInput({
         </PromptInputToolbar>
       </PromptInput>
     </div>
+    </>
   );
 }
 

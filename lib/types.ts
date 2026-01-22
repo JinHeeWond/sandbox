@@ -55,3 +55,11 @@ export type Attachment = {
   url: string;
   contentType: string;
 };
+
+export type PromptTemplate = {
+  id: string;
+  title: string;
+  description: string;
+  content: string;
+  category: string;
+};

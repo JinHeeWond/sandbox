@@ -3,7 +3,7 @@
 import type { UseChatHelpers } from "@ai-sdk/react";
 import type { UIMessage } from "ai";
 import equal from "fast-deep-equal";
-import { CheckIcon } from "lucide-react";
+import { CheckIcon, Sparkles } from "lucide-react";
 import {
   type ChangeEvent,
   type Dispatch,
@@ -143,6 +143,7 @@ function PureMultimodalInput({
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [uploadQueue, setUploadQueue] = useState<string[]>([]);
+  const [isTemplateActive, setIsTemplateActive] = useState(false);
 
   const submitForm = useCallback(() => {
     window.history.pushState({}, "", `/chat/${chatId}`);
@@ -384,6 +385,10 @@ function PureMultimodalInput({
               selectedModelId={selectedModelId}
               status={status}
             />
+            <TemplateButton
+              isActive={isTemplateActive}
+              onClick={() => setIsTemplateActive(!isTemplateActive)}
+            />
             <ModelSelectorCompact
               onModelChange={onModelChange}
               selectedModelId={selectedModelId}
@@ -556,3 +561,31 @@ function PureStopButton({
 }
 
 const StopButton = memo(PureStopButton);
+
+function PureTemplateButton({
+  isActive,
+  onClick,
+}: {
+  isActive: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <Button
+      className={cn(
+        "aspect-square h-8 rounded-lg p-1 transition-colors",
+        isActive
+          ? "bg-primary text-primary-foreground hover:bg-primary/90"
+          : "hover:bg-accent"
+      )}
+      onClick={(event) => {
+        event.preventDefault();
+        onClick();
+      }}
+      variant="ghost"
+    >
+      <Sparkles size={14} style={{ width: 14, height: 14 }} />
+    </Button>
+  );
+}
+
+const TemplateButton = memo(PureTemplateButton);

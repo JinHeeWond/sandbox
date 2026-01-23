@@ -108,7 +108,6 @@ export function Chat({
     transport: new DefaultChatTransport({
       api: "/api/chat",
       fetch: fetchWithErrorHandlers,
-      streamProtocol: "ui",
       prepareSendMessagesRequest(request) {
         const lastMessage = request.messages.at(-1);
         const isToolApprovalContinuation =
@@ -268,153 +267,150 @@ export function Chat({
         });
       }
     },
-    onFinish: async () => {
-      console.log("[onFinish] Stream finished, clarifyingQuestionsRef:", clarifyingQuestionsRef.current, "generatedImageRef:", generatedImageRef.current);
+    onFinish: () => {
+      console.log("[onFinish] called. status should become ready soon.");
 
-      // Small delay to ensure useChat has finalized its internal state
-      await new Promise(resolve => setTimeout(resolve, 100));
-
-      // Clarifying questions 처리
-      if (clarifyingQuestionsRef.current) {
-        const questions = clarifyingQuestionsRef.current;
-        clarifyingQuestionsRef.current = null;
-
-        console.log("[onFinish] Processing clarifying questions in onFinish");
-        setMessages((currentMessages) => {
-          const lastMessage = currentMessages.at(-1);
-          console.log("[onFinish] Last message:", lastMessage?.role, lastMessage?.parts?.length);
-          if (lastMessage?.role === "assistant") {
-            const hasQuestions = lastMessage.parts?.some(
-              (p) => (p as any).type === "clarifying-questions"
-            );
-            if (!hasQuestions) {
-              console.log("[onFinish] Adding clarifying-questions to message");
-              return currentMessages.map((msg, idx) =>
-                idx === currentMessages.length - 1
-                  ? {
-                      ...msg,
-                      parts: [
-                        ...(msg.parts || []),
-                        {
-                          type: "clarifying-questions",
-                          questions: questions,
-                        } as any,
-                      ],
-                    }
-                  : msg
-              );
-            } else {
-              console.log("[onFinish] Message already has clarifying-questions");
-            }
-          }
-          return currentMessages;
-        });
-      }
-
-      // Generated image 처리 - 스트리밍 완료 후 안전하게 추가
-      if (generatedImageRef.current) {
-        const imageUrl = generatedImageRef.current;
-        generatedImageRef.current = null;
-
-        console.log("[onFinish] Processing generated image in onFinish, imageUrl length:", imageUrl.length);
-        setMessages((currentMessages) => {
-          const lastMessage = currentMessages.at(-1);
-          console.log("[onFinish] Last message for image:", lastMessage?.role, "parts:", lastMessage?.parts?.length);
-          if (lastMessage?.role === "assistant") {
-            const hasImage = lastMessage.parts?.some(
-              (p) => (p as any).type === "generated-image"
-            );
-            if (!hasImage) {
-              console.log("[onFinish] Adding generated-image to message");
-              return currentMessages.map((msg, idx) =>
-                idx === currentMessages.length - 1
-                  ? {
-                      ...msg,
-                      parts: [
-                        ...(msg.parts || []),
-                        {
-                          type: "generated-image",
-                          imageUrl: imageUrl,
-                        } as any,
-                      ],
-                    }
-                  : msg
-              );
-            } else {
-              console.log("[onFinish] Message already has generated-image");
-            }
-          }
-          return currentMessages;
-        });
-      } else {
-        // ref에 이미지가 없으면 DB에서 확인
-        console.log("[onFinish] No image in ref, checking DB...");
+      // onFinish는 동기적으로 즉시 끝내고, 비동기 작업은 분리해서 백그라운드로 실행
+      // 이렇게 하면 useChat의 status가 바로 ready로 돌아옴
+      void (async () => {
         try {
-          const response = await fetch(`/api/chat/${id}/messages`);
-          if (response.ok) {
-            const dbMessages = await response.json();
-            const lastDbMessage = dbMessages.at(-1);
-            if (lastDbMessage?.role === "assistant") {
-              const imagePart = lastDbMessage.parts?.find(
-                (p: any) => p.type === "generated-image"
-              );
-              const clarifyingPart = lastDbMessage.parts?.find(
-                (p: any) => p.type === "clarifying-questions"
-              );
+          // 아주 짧은 딜레이 (상태 정리용)
+          await new Promise((r) => setTimeout(r, 0));
 
-              if (imagePart?.imageUrl || clarifyingPart?.questions) {
-                console.log("[onFinish] Found special parts in DB");
-                setMessages((currentMessages) => {
-                  const lastMessage = currentMessages.at(-1);
-                  if (lastMessage?.role === "assistant") {
-                    const partsToAdd: any[] = [];
+          // Clarifying questions 처리
+          if (clarifyingQuestionsRef.current) {
+            const questions = clarifyingQuestionsRef.current;
+            clarifyingQuestionsRef.current = null;
 
-                    if (imagePart?.imageUrl) {
-                      const hasImage = lastMessage.parts?.some(
-                        (p) => (p as any).type === "generated-image"
-                      );
-                      if (!hasImage) {
-                        console.log("[onFinish] Adding image from DB");
-                        partsToAdd.push(imagePart);
-                      }
-                    }
-
-                    if (clarifyingPart?.questions) {
-                      const hasQuestions = lastMessage.parts?.some(
-                        (p) => (p as any).type === "clarifying-questions"
-                      );
-                      if (!hasQuestions) {
-                        partsToAdd.push(clarifyingPart);
-                      }
-                    }
-
-                    if (partsToAdd.length > 0) {
-                      return currentMessages.map((msg, idx) =>
-                        idx === currentMessages.length - 1
-                          ? {
-                              ...msg,
-                              parts: [...(msg.parts || []), ...partsToAdd],
-                            }
-                          : msg
-                      );
-                    }
-                  }
-                  return currentMessages;
-                });
+            console.log("[onFinish] Processing clarifying questions in onFinish");
+            setMessages((currentMessages) => {
+              const lastMessage = currentMessages.at(-1);
+              if (lastMessage?.role === "assistant") {
+                const hasQuestions = lastMessage.parts?.some(
+                  (p) => (p as any).type === "clarifying-questions"
+                );
+                if (!hasQuestions) {
+                  return currentMessages.map((msg, idx) =>
+                    idx === currentMessages.length - 1
+                      ? {
+                          ...msg,
+                          parts: [
+                            ...(msg.parts || []),
+                            {
+                              type: "clarifying-questions",
+                              questions: questions,
+                            } as any,
+                          ],
+                        }
+                      : msg
+                  );
+                }
               }
+              return currentMessages;
+            });
+          }
+
+          // Generated image 처리
+          if (generatedImageRef.current) {
+            const imageUrl = generatedImageRef.current;
+            generatedImageRef.current = null;
+
+            console.log("[onFinish] Processing generated image in onFinish");
+            setMessages((currentMessages) => {
+              const lastMessage = currentMessages.at(-1);
+              if (lastMessage?.role === "assistant") {
+                const hasImage = lastMessage.parts?.some(
+                  (p) => (p as any).type === "generated-image"
+                );
+                if (!hasImage) {
+                  return currentMessages.map((msg, idx) =>
+                    idx === currentMessages.length - 1
+                      ? {
+                          ...msg,
+                          parts: [
+                            ...(msg.parts || []),
+                            {
+                              type: "generated-image",
+                              imageUrl: imageUrl,
+                            } as any,
+                          ],
+                        }
+                      : msg
+                  );
+                }
+              }
+              return currentMessages;
+            });
+          } else {
+            // ref에 이미지가 없으면 DB에서 확인 (UI는 이미 ready 상태이므로 느려져도 괜찮음)
+            try {
+              const response = await fetch(`/api/chat/${id}/messages`);
+              if (response.ok) {
+                const dbMessages = await response.json();
+                const lastDbMessage = dbMessages.at(-1);
+                if (lastDbMessage?.role === "assistant") {
+                  const imagePart = lastDbMessage.parts?.find(
+                    (p: any) => p.type === "generated-image"
+                  );
+                  const clarifyingPart = lastDbMessage.parts?.find(
+                    (p: any) => p.type === "clarifying-questions"
+                  );
+
+                  if (imagePart?.imageUrl || clarifyingPart?.questions) {
+                    setMessages((currentMessages) => {
+                      const lastMessage = currentMessages.at(-1);
+                      if (lastMessage?.role === "assistant") {
+                        const partsToAdd: any[] = [];
+
+                        if (imagePart?.imageUrl) {
+                          const hasImage = lastMessage.parts?.some(
+                            (p) => (p as any).type === "generated-image"
+                          );
+                          if (!hasImage) {
+                            partsToAdd.push(imagePart);
+                          }
+                        }
+
+                        if (clarifyingPart?.questions) {
+                          const hasQuestions = lastMessage.parts?.some(
+                            (p) => (p as any).type === "clarifying-questions"
+                          );
+                          if (!hasQuestions) {
+                            partsToAdd.push(clarifyingPart);
+                          }
+                        }
+
+                        if (partsToAdd.length > 0) {
+                          return currentMessages.map((msg, idx) =>
+                            idx === currentMessages.length - 1
+                              ? {
+                                  ...msg,
+                                  parts: [...(msg.parts || []), ...partsToAdd],
+                                }
+                              : msg
+                          );
+                        }
+                      }
+                      return currentMessages;
+                    });
+                  }
+                }
+              }
+            } catch (e) {
+              console.error("[onFinish] DB fetch failed:", e);
             }
           }
-        } catch (error) {
-          console.error("[onFinish] Error fetching messages from DB:", error);
-        }
-      }
 
-      // 사이드바 히스토리 업데이트를 위해 revalidation 강제
-      mutate(
-        (key) => typeof key === 'string' && key.startsWith('/api/history'),
-        undefined,
-        { revalidate: true }
-      );
+          // 사이드바 히스토리 업데이트
+          mutate(
+            (key) => typeof key === 'string' && key.startsWith('/api/history'),
+            undefined,
+            { revalidate: true }
+          );
+        } catch (e) {
+          console.error("[onFinish] async task failed:", e);
+        }
+      })();
     },
     onError: (error) => {
       if (error instanceof ChatSDKError) {

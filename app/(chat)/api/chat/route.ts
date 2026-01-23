@@ -149,24 +149,57 @@ export async function POST(request: Request) {
 
     const assistantMessageId = generateUUID();
 
+    // ★ 파일 파트 감지를 먼저 수행 (이미지 생성 분류보다 우선)
+    const isImagePart = (part: any) => {
+      if (part.type !== "file") return false;
+      if (part.mediaType?.startsWith("image/")) return true;
+      const url = part.url?.toLowerCase() || "";
+      return url.endsWith(".jpg") || url.endsWith(".jpeg") || url.endsWith(".png") || url.endsWith(".gif") || url.endsWith(".webp");
+    };
+
+    const isPdfPart = (part: any) => {
+      if (part.type !== "file") return false;
+      if (part.mediaType === "application/pdf") return true;
+      const url = part.url?.toLowerCase() || "";
+      return url.endsWith(".pdf");
+    };
+
+    const imageParts = incomingMessage?.parts?.filter(isImagePart) || [];
+    const pdfParts = incomingMessage?.parts?.filter(isPdfPart) || [];
+    const hasFilesInCurrentMessage = imageParts.length > 0 || pdfParts.length > 0;
+
+    console.log("[route.ts] Image parts found:", imageParts.length);
+    console.log("[route.ts] PDF parts found:", pdfParts.length);
+
+    // ★ 파일이 첨부되어 있으면 이미지 생성 분류를 건너뛰고 멀티모달 처리로 이동
+    // 이미지가 첨부된 상태에서 "이게 무슨 이미지냐"는 이미지 분석 요청이지 이미지 생성 요청이 아님
+    if (hasFilesInCurrentMessage) {
+      console.log("[route.ts] Files attached, skipping image generation check - proceeding to multimodal processing");
+    }
+
     // ★ 키워드 기반 이미지 생성 요청 1차 체크 (LLM 분류보다 안정적)
+    // 단, 파일이 첨부되어 있으면 이미지 생성으로 분류하지 않음
     const looksLikeImageGen = (text: string) => {
       const t = (text || "").trim();
       if (!t) return false;
-      return /(이미지|그림|일러스트|사진|포스터|짤|그려줘|그려 줘|만들어줘|만들어 줘|생성해줘|생성해 줘|draw|generate an image|create an image|make an image|make a picture)/i.test(t);
+      // "이미지"만 있는 경우는 제외하고, 명확한 생성 요청만 매칭
+      // "이미지 생성", "이미지 만들어", "그림 그려줘" 등
+      return /(이미지\s*(를\s*)?(생성|만들|그려)|그림\s*(을\s*)?(그려|만들|생성)|일러스트\s*(를\s*)?(그려|만들|생성)|사진\s*(을\s*)?(만들|생성)|포스터\s*(를\s*)?(만들|생성)|짤\s*(을\s*)?(만들|생성)|그려\s*줘|그려\s*주세요|만들어\s*줘|만들어\s*주세요|생성해\s*줘|생성해\s*주세요|draw|generate\s+(an?\s+)?image|create\s+(an?\s+)?image|make\s+(an?\s+)?image|make\s+(a\s+)?picture)/i.test(t);
     };
 
-    // ★ 이미지 생성 요청을 가장 먼저 체크 (hasFiles보다 우선)
+    // ★ 이미지 생성 요청 체크 - 파일이 첨부되어 있으면 건너뜀
     let intent: "IMAGE_GENERATION" | "OTHER" = "OTHER";
-    if (looksLikeImageGen(userMessageText)) {
-      intent = "IMAGE_GENERATION";
-      console.log("[route.ts] Intent matched by keyword regex: IMAGE_GENERATION");
-    } else {
-      intent = await classifyIntent(userMessageText);
+    if (!hasFilesInCurrentMessage) {
+      if (looksLikeImageGen(userMessageText)) {
+        intent = "IMAGE_GENERATION";
+        console.log("[route.ts] Intent matched by keyword regex: IMAGE_GENERATION");
+      } else {
+        intent = await classifyIntent(userMessageText);
+      }
+      console.log("[route.ts] Intent classification:", intent, "for text:", userMessageText);
     }
-    console.log("[route.ts] Intent classification:", intent, "for text:", userMessageText);
 
-    if (intent === "IMAGE_GENERATION") {
+    if (intent === "IMAGE_GENERATION" && !hasFilesInCurrentMessage) {
       console.log("[route.ts] Image generation request detected, using Imagen");
 
       // ★ 핵심 수정: 이미지 생성을 execute 밖에서 먼저 수행
@@ -247,38 +280,15 @@ export async function POST(request: Request) {
       return createUIMessageStreamResponse({ stream });
     }
 
-    // 파일 파트 감지 - 이미지 또는 PDF
-    const isImagePart = (part: any) => {
-      if (part.type !== "file") return false;
-      if (part.mediaType?.startsWith("image/")) return true;
-      const url = part.url?.toLowerCase() || "";
-      return url.endsWith(".jpg") || url.endsWith(".jpeg") || url.endsWith(".png") || url.endsWith(".gif") || url.endsWith(".webp");
-    };
-
-    const isPdfPart = (part: any) => {
-      if (part.type !== "file") return false;
-      if (part.mediaType === "application/pdf") return true;
-      const url = part.url?.toLowerCase() || "";
-      return url.endsWith(".pdf");
-    };
-
-    const imageParts = incomingMessage?.parts?.filter(isImagePart) || [];
-    const pdfParts = incomingMessage?.parts?.filter(isPdfPart) || [];
-
-    console.log("[route.ts] Image parts found:", imageParts.length);
-    console.log("[route.ts] PDF parts found:", pdfParts.length);
-    if (imageParts.length > 0) {
-      console.log("[route.ts] Image parts detail:", JSON.stringify(imageParts, null, 2));
-    }
-
-    const hasFilesInCurrentMessage = imageParts.length > 0 || pdfParts.length > 0;
-
     // 이전 메시지들을 조회하여 파일 컨텍스트 확인
     const previousMessages = await getMessagesByChatId({ id });
 
     // ★ hasFiles는 현재 메시지에 파일이 있을 때만 true (히스토리는 멀티모달 분기에 영향 안 줌)
     const hasFiles = hasFilesInCurrentMessage;
 
+    if (imageParts.length > 0) {
+      console.log("[route.ts] Image parts detail:", JSON.stringify(imageParts, null, 2));
+    }
     console.log("[route.ts] Files in current message:", hasFilesInCurrentMessage);
 
     // 파일 파트를 처리하는 헬퍼 함수

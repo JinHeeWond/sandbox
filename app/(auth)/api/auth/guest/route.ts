@@ -1,21 +1,6 @@
 import { NextResponse } from "next/server";
-import { getToken } from "next-auth/jwt";
-import { signIn } from "@/app/(auth)/auth";
-import { isDevelopmentEnvironment } from "@/lib/constants";
 
+// 게스트 로그인 비활성화 - 로그인 페이지로 리다이렉트
 export async function GET(request: Request) {
-  const { searchParams } = new URL(request.url);
-  const redirectUrl = searchParams.get("redirectUrl") || "/";
-
-  const token = await getToken({
-    req: request,
-    secret: process.env.AUTH_SECRET,
-    secureCookie: !isDevelopmentEnvironment,
-  });
-
-  if (token) {
-    return NextResponse.redirect(new URL("/", request.url));
-  }
-
-  return signIn("guest", { redirect: true, redirectTo: redirectUrl });
+  return NextResponse.redirect(new URL("/login", request.url));
 }

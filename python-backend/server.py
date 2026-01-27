@@ -3,7 +3,7 @@ import os
 import json
 import re
 from typing import TypedDict, Annotated, List, Dict, Any, Optional
-from fastapi import FastAPI
+from fastapi import FastAPI, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
@@ -21,6 +21,13 @@ load_dotenv()
 # ==========================================================
 TAVILY_API_KEY = os.getenv("TAVILY_API_KEY")
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
+SERVER_API_KEY = os.getenv("SERVER_API_KEY", "my-secret-api-key-12345")  # 서버 인증용 API 키
+
+def verify_api_key(x_api_key: str = Header(None)):
+    """API 키 검증"""
+    if x_api_key != SERVER_API_KEY:
+        raise HTTPException(status_code=401, detail="Invalid API Key")
+    return x_api_key
 
 tavily_client = TavilyClient(api_key=TAVILY_API_KEY)
 
@@ -1305,7 +1312,10 @@ class ChatResponse(BaseModel):
     questions: Optional[List[dict]] = None
 
 @app.post("/api/chat", response_model=ChatResponse)
-async def chat(request: ChatRequest):
+async def chat(request: ChatRequest, api_key: str = Header(None, alias="X-API-Key")):
+    # API 키 검증
+    if api_key != SERVER_API_KEY:
+        raise HTTPException(status_code=401, detail="Invalid API Key")
     config = {"configurable": {"thread_id": request.thread_id}}
     
     print(f"Chat API called with message: {request.message[:100]}")

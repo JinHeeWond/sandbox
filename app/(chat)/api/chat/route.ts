@@ -482,7 +482,10 @@ export async function POST(request: Request) {
 
     const pythonResponse = await fetch(`${PYTHON_BACKEND_URL}/api/chat`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        "X-API-Key": process.env.PYTHON_SERVER_API_KEY || "",
+      },
       body: JSON.stringify({
         message: userMessageText,
         thread_id: id,

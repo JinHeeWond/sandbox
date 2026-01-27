@@ -23,12 +23,13 @@ export async function proxy(request: NextRequest) {
     secureCookie: !isDevelopmentEnvironment,
   });
 
+  // 로그인/회원가입 페이지는 비로그인 상태에서도 접근 허용
   if (!token) {
-    const redirectUrl = encodeURIComponent(request.url);
-
-    return NextResponse.redirect(
-      new URL(`/api/auth/guest?redirectUrl=${redirectUrl}`, request.url)
-    );
+    if (["/login", "/register"].includes(pathname)) {
+      return NextResponse.next();
+    }
+    // 그 외 페이지는 로그인 페이지로 리다이렉트
+    return NextResponse.redirect(new URL("/login", request.url));
   }
 
   const isGuest = guestRegex.test(token?.email ?? "");

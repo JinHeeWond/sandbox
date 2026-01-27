@@ -60,6 +60,7 @@ class AgentState(TypedDict):
     missing_elements: List[str]  # CRISPE 부족 요소들
     crispe_info: Annotated[Dict[str, str], merge_crispe_info]  # CRISPE 분석에서 수집된 정보 (병합 함수 적용)
     clarification_count: int  # 선제적 질문 횟수 추적
+    is_report: bool  # 보고서 형식 요청 여부 (reflect 노드 사용 결정)
 
 CONTEXT_BUDGET_TOKENS = 8000
 SUMMARIZE_AT_TOKENS = 12000
@@ -384,6 +385,60 @@ def classify_intent_with_llm(query: str) -> str:
     except Exception as e:
         print(f"Error in classify_intent_with_llm: {e}")
         return 'search'
+
+def needs_planning_with_llm(query: str, crispe_info: Dict[str, str] = None) -> dict:
+    """
+    복잡한 작업이라 계획(planner)이 필요한지 판단합니다.
+    Returns: {"needs_planning": bool, "reason": str, "is_report": bool}
+    """
+    crispe_context = ""
+    if crispe_info:
+        crispe_parts = [f"- {k}: {v}" for k, v in crispe_info.items() if v]
+        if crispe_parts:
+            crispe_context = "\n## 사용자가 제공한 추가 정보:\n" + "\n".join(crispe_parts)
+
+    system_prompt = f"""## Role
+복잡한 작업인지 판단하는 분석기입니다.
+
+## 판단 기준
+
+### 계획(planning)이 필요한 경우 (needs_planning: true):
+- 보고서/리포트 작성 요청 (시장 분석, 연구 보고서, 비교 분석 등)
+- 여러 단계의 조사가 필요한 복잡한 요청
+- 여행 일정표, 프로젝트 계획서 등 구조화된 문서 작성
+- 여러 주제를 종합해야 하는 요청
+- "자세히", "상세하게", "종합적으로" 등의 표현이 포함된 요청
+
+### 계획이 필요 없는 경우 (needs_planning: false):
+- 단순 질문/답변
+- 간단한 추천 (맛집 추천, 영화 추천 등)
+- 단순 정보 검색
+- 짧은 글쓰기 (이메일, 짧은 메시지 등)
+- 코드 작성
+- 번역
+
+### 보고서 형식 여부 (is_report: true):
+- 보고서, 리포트, 분석서, 일정표, 계획서 등 구조화된 문서 요청
+{crispe_context}
+
+## 출력 형식 (JSON만)
+{{
+    "needs_planning": boolean,
+    "reason": "판단 이유 (한국어로 간단히)",
+    "is_report": boolean
+}}
+"""
+    try:
+        response = json_model.invoke(system_prompt + f"\n\n[사용자 요청]\n{query}")
+        result = json.loads(response.content)
+        needs_planning = result.get("needs_planning", False)
+        is_report = result.get("is_report", False)
+        reason = result.get("reason", "")
+        print(f"Planning 필요 여부 판단: needs_planning={needs_planning}, is_report={is_report}, reason={reason}")
+        return result
+    except Exception as e:
+        print(f"Error in needs_planning_with_llm: {e}")
+        return {"needs_planning": False, "is_report": False, "reason": "판단 오류로 기본값 사용"}
 
 def needs_research_with_llm(query: str, crispe_info: Dict[str, str] = None) -> dict:
     """
@@ -1050,6 +1105,12 @@ def generator_node(state: AgentState):
     # 중국어/일본어 등 비한글 문자 제거
     response_content = clean_non_korean(response_content)
 
+    # 보고서 요청이면 report_draft로 설정 → router → reflect로 이동
+    is_report = state.get("is_report", False)
+    if is_report and response_type not in ["error"]:
+        response_type = "report_draft"
+        print(f"Generator: is_report=True, setting response_type to report_draft for reflect node")
+
     return {
         "messages": [AIMessage(content=response_content)],
         "response_type": response_type,
@@ -1124,7 +1185,23 @@ def router_node(state: AgentState):
                 "detected_domain": detected_domain
             }
 
-        # 명확한 요청 - 검색 필요 여부 판단
+        # 명확한 요청 - 먼저 복잡한 작업(planner 필요) 여부 판단
+        planning_result = needs_planning_with_llm(conversation_history, existing_crispe)
+        needs_planning = planning_result.get("needs_planning", False)
+        is_report = planning_result.get("is_report", False)
+
+        if needs_planning:
+            print(f"Router: Complex task detected, routing to planner. Reason: {planning_result.get('reason', '')}")
+            return {
+                **updates,
+                "next_node": "planner",
+                "missing_elements": [],
+                "crispe_info": existing_crispe,
+                "detected_domain": detected_domain,
+                "is_report": is_report
+            }
+
+        # 검색 필요 여부 판단
         research_result = needs_research_with_llm(conversation_history, existing_crispe)
         needs_research = research_result.get("needs_research", True)
 
@@ -1135,7 +1212,8 @@ def router_node(state: AgentState):
                 "next_node": "researcher",
                 "missing_elements": [],
                 "crispe_info": existing_crispe,
-                "detected_domain": detected_domain
+                "detected_domain": detected_domain,
+                "is_report": False
             }
         else:
             print(f"Router: Request doesn't need research, routing directly to generator. Reason: {research_result.get('reason', '')}")
@@ -1144,7 +1222,8 @@ def router_node(state: AgentState):
                 "next_node": "generator",
                 "missing_elements": [],
                 "crispe_info": existing_crispe,
-                "detected_domain": detected_domain
+                "detected_domain": detected_domain,
+                "is_report": False
             }
 
     last = msgs[-1]
